@@ -2,5 +2,9 @@ numpy
 pandas
 pygetwindow
 scapy
+requests
 scikit-learn
 pynput
+tk
+smtplib
+email
