@@ -19,7 +19,7 @@ monitoring_threads = []
 monitoring_active = False
 stop_event = threading.Event()
 
-API_KEY = 'your virustotal api key'
+API_KEY = 'API KEY'
 SMTP_SERVER = 'smtp.gmail.com'
 SMTP_PORT = 587
 EMAIL_USERNAME = 'your_email@gmail.com'
@@ -148,12 +148,14 @@ def create_gui():
         with open(file_path, 'rb') as file:
             files = {'file': (os.path.basename(file_path), file)}
             headers = {'x-apikey': API_KEY}
+
             response = requests.post('https://www.virustotal.com/api/v3/files', files=files, headers=headers)
 
             if response.status_code == 200:
-                analysis_url = response.json()['data']['links']['self']
-                print(f"File uploaded successfully. Check results here: {analysis_url}")
-                messagebox.showinfo("File Uploaded", f"Check results: {analysis_url}")
+                # analysis_url = response.json()['data']['links']['self']
+                analysis_id = response.json()['data']['id']
+                print(f"File uploaded successfully. Check results here: https://www.virustotal.com/gui/file-analysis/{analysis_id}")
+                messagebox.showinfo("File Uploaded", f"Check results: https://www.virustotal.com/gui/file-analysis/{analysis_id}")
             else:
                 print("Error uploading file to VirusTotal")
                 messagebox.showerror("Error", "VirusTotal upload failed")
